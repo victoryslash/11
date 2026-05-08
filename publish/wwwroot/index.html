@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>海康流播放测试</title>
     <style>
         body { font-family: Arial; background: #1a1a1a; color: white; margin: 20px; }
@@ -10,6 +11,9 @@
         select { padding: 8px 12px; font-size: 16px; min-width: 150px; }
         button { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
         button:hover { background: #0056b3; }
+        .status { margin-top: 10px; padding: 10px; border-radius: 4px; }
+        .status.ok { background: #28a745; }
+        .status.error { background: #dc3545; }
     </style>
 </head>
 <body>
@@ -18,19 +22,13 @@
         
         <div>
             <select id="channelSelect">
-                <option value="1">通道 1</option>
-                <option value="2">通道 2</option>
-                <option value="3">通道 3</option>
-                <option value="4">通道 4</option>
-                <option value="5">通道 5</option>
-                <option value="6">通道 6</option>
-                <option value="7">通道 7</option>
-                <option value="8">通道 8</option>
-                <option value="9">通道 9</option>
-                <option value="10">通道 10</option>
+                <option value="">加载中...</option>
             </select>
             <button onclick="play()">播放</button>
+            <button onclick="stop()">停止</button>
         </div>
+
+        <div id="status" class="status">准备就绪</div>
 
         <div class="channel">
             <video id="videoPlayer" controls autoplay muted></video>
@@ -40,39 +38,131 @@
     <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
     <script>
         let player = null;
+        let reconnectTimer = null;
 
-        function play() {
-            const channel = document.getElementById('channelSelect').value;
-            
+        function setStatus(msg, isError = false) {
+            const el = document.getElementById('status');
+            el.textContent = msg;
+            el.className = 'status ' + (isError ? 'error' : 'ok');
+        }
+
+        function stop() {
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
             if (player) {
                 player.destroy();
+                player = null;
             }
+            setStatus('已停止');
+        }
 
+        function play() {
+            stop();
+
+            const channel = document.getElementById('channelSelect').value;
+            
+            if (!channel) {
+                setStatus('请先选择有效通道', true);
+                return;
+            }
+            
             if (!flvjs.isSupported()) {
-                alert('浏览器不支持flv.js');
+                setStatus('浏览器不支持flv.js', true);
                 return;
             }
 
             const videoElement = document.getElementById('videoPlayer');
             
+            setStatus(`正在连接通道 ${channel}...`);
+
             player = flvjs.createPlayer({
                 type: 'flv',
-                url: `/stream/play/${channel}`
+                url: `/stream/play/${channel}`,
+                hasAudio: false,
+                hasVideo: true,
+                isLive: true,
+                cors: true
             }, {
-                enableWorker: false,
+                enableWorker: true,
+                enableStashBuffer: true,
+                stashInitialSize: 128,
                 lazyLoad: false,
+                lazyLoadMaxDuration: 0,
+                lazyLoadRecoverDuration: 0,
+                deferLoadAfterSourceOpen: false,
+                autoCleanupSourceBuffer: true,
+                autoCleanupMaxBackwardDuration: 3,
+                autoCleanupMinBackwardDuration: 2,
+                fixAudioTimestampGap: true,
+                accurateSeek: false,
                 liveBufferLatencyChasing: true,
-                liveBufferLatencyMaxLatency: 0.5,
-                liveBufferLatencyMinRemain: 0.2
+                liveBufferLatencyMaxLatency: 1.5,
+                liveBufferLatencyMinRemain: 0.5,
+                liveBufferCatchSpeed: 1.2
+            });
+
+            player.on(flvjs.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+                console.error('FLV错误:', errorType, errorDetail, errorInfo);
+                setStatus(`错误: ${errorDetail}`, true);
+                
+                if (errorType === flvjs.ErrorTypes.NETWORK_ERROR) {
+                    if (reconnectTimer) clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(() => {
+                        setStatus('正在重连...');
+                        play();
+                    }, 2000);
+                }
+            });
+
+            player.on(flvjs.Events.STATISTICS_INFO, (info) => {
+                if (info.speed > 0) {
+                    setStatus(`播放中 | 速度: ${Math.round(info.speed)} KB/s | 缓冲: ${Math.round(info.bufferLength * 1000)}ms`);
+                }
             });
 
             player.attachMediaElement(videoElement);
             player.load();
-            player.play().catch(e => console.log('播放失败:', e));
+            
+            player.play().then(() => {
+                setStatus('播放成功');
+            }).catch(e => {
+                console.log('播放失败:', e);
+                setStatus('自动播放被浏览器阻止，请点击播放按钮', true);
+            });
+        }
+
+        async function loadChannels() {
+            try {
+                const res = await fetch('/stream/status');
+                const data = await res.json();
+                
+                const select = document.getElementById('channelSelect');
+                select.innerHTML = '';
+                
+                if (data.Channels && data.Channels.length > 0) {
+                    data.Channels.forEach((ch) => {
+                        const option = document.createElement('option');
+                        option.value = ch.Channel;
+                        option.textContent = `通道 ${ch.Channel} (${Math.round(ch.BufferSize / 1024)} KB)`;
+                        select.appendChild(option);
+                    })
+                } else {
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = '暂无可用通道';
+                        select.appendChild(option);
+                }
+            } catch (e) {
+                console.error('加载通道失败:', e);
+            }
         }
 
         window.onload = function() {
-            play();
+            loadChannels();
+            setInterval(loadChannels, 5000);
+            setTimeout(play, 1000);
         };
     </script>
 </body>
