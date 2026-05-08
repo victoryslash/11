@@ -147,12 +147,16 @@
                         option.value = ch.Channel;
                         option.textContent = `通道 ${ch.Channel} (${Math.round(ch.BufferSize / 1024)} KB)`;
                         select.appendChild(option);
-                    })
+                    });
                 } else {
-                        const option = document.createElement('option');
-                        option.value = '';
-                        option.textContent = '暂无可用通道';
-                        select.appendChild(option);
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = '暂无可用通道 (请检查NVR登录)';
+                    select.appendChild(option);
+                }
+                
+                if (data.Error) {
+                    setStatus(`服务端错误: ${data.Error}`, true);
                 }
             } catch (e) {
                 console.error('加载通道失败:', e);
