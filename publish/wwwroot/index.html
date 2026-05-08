@@ -138,27 +138,42 @@
                 const res = await fetch('/stream/status');
                 const data = await res.json();
                 
+                console.log('状态:', data);
+                
                 const select = document.getElementById('channelSelect');
                 const currentValue = select.value;
                 select.innerHTML = '';
                 
-                if (data.Channels && data.Channels.length > 0) {
-                    data.Channels.forEach((ch) => {
-                        const option = document.createElement('option');
-                        option.value = ch.Channel;
-                        option.textContent = `通道 ${ch.Channel} (${Math.round(ch.BufferSize / 1024)} KB)`;
-                        select.appendChild(option);
-                    });
+                let hasChannels = false;
+                
+                if (data.LoggedIn && data.Channels && data.Channels.length > 0) {
+                    const playable = data.Channels.filter((ch) => ch.PreviewSuccess);
                     
-                    if (currentValue) {
-                        select.value = currentValue;
-                    } else {
-                        select.selectedIndex = 0;
+                    if (playable.length > 0) {
+                        playable.forEach((ch) => {
+                            const option = document.createElement('option');
+                            option.value = ch.Channel;
+                            const status = ch.HasBuffer ? `${Math.round(ch.BufferSize / 1024)} KB, ${ch.FrameCount}帧` : '等待数据...';
+                            option.textContent = `通道 ${ch.Channel} (${status})`;
+                            select.appendChild(option);
+                        });
+                        
+                        if (currentValue) {
+                            select.value = currentValue;
+                        } else {
+                            select.selectedIndex = 0;
+                        }
+                        hasChannels = true;
                     }
+                } else if (!data.LoggedIn) {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'NVR未登录，请检查配置';
+                    select.appendChild(option);
                 } else {
                     const option = document.createElement('option');
                     option.value = '';
-                    option.textContent = '暂无可用通道 (请检查NVR登录)';
+                    option.textContent = '暂无可用通道，请检查通道配置';
                     select.appendChild(option);
                 }
                 
@@ -166,7 +181,7 @@
                     setStatus(`服务端错误: ${data.Error}`, true);
                 }
                 
-                return data.Channels && data.Channels.length > 0;
+                return hasChannels;
             } catch (e) {
                 console.error('加载通道失败:', e);
                 return false;
