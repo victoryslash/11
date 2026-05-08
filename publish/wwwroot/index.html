@@ -139,6 +139,7 @@
                 const data = await res.json();
                 
                 const select = document.getElementById('channelSelect');
+                const currentValue = select.value;
                 select.innerHTML = '';
                 
                 if (data.Channels && data.Channels.length > 0) {
@@ -148,6 +149,12 @@
                         option.textContent = `通道 ${ch.Channel} (${Math.round(ch.BufferSize / 1024)} KB)`;
                         select.appendChild(option);
                     });
+                    
+                    if (currentValue) {
+                        select.value = currentValue;
+                    } else {
+                        select.selectedIndex = 0;
+                    }
                 } else {
                     const option = document.createElement('option');
                     option.value = '';
@@ -158,15 +165,23 @@
                 if (data.Error) {
                     setStatus(`服务端错误: ${data.Error}`, true);
                 }
+                
+                return data.Channels && data.Channels.length > 0;
             } catch (e) {
                 console.error('加载通道失败:', e);
+                return false;
             }
         }
 
-        window.onload = function() {
-            loadChannels();
+        window.onload = async function() {
+            const hasChannels = await loadChannels();
             setInterval(loadChannels, 5000);
-            setTimeout(play, 1000);
+            
+            if (hasChannels) {
+                setTimeout(play, 500);
+            } else {
+                setStatus('暂无可用通道，请检查NVR连接配置', true);
+            }
         };
     </script>
 </body>
