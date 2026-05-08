@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>海康流播放测试</title>
+    <style>
+        body { font-family: Arial; background: #1a1a1a; color: white; margin: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .channel { margin: 20px 0; background: #2d2d2d; padding: 15px; border-radius: 8px; }
+        video { width: 100%; max-height: 400px; background: #000; }
+        select { padding: 8px 12px; font-size: 16px; min-width: 150px; }
+        button { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>海康摄像头流播放测试</h1>
+        
+        <div>
+            <select id="channelSelect">
+                <option value="1">通道 1</option>
+                <option value="2">通道 2</option>
+                <option value="3">通道 3</option>
+                <option value="4">通道 4</option>
+                <option value="5">通道 5</option>
+                <option value="6">通道 6</option>
+                <option value="7">通道 7</option>
+                <option value="8">通道 8</option>
+                <option value="9">通道 9</option>
+                <option value="10">通道 10</option>
+            </select>
+            <button onclick="play()">播放</button>
+        </div>
+
+        <div class="channel">
+            <video id="videoPlayer" controls autoplay muted></video>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
+    <script>
+        let player = null;
+
+        function play() {
+            const channel = document.getElementById('channelSelect').value;
+            
+            if (player) {
+                player.destroy();
+            }
+
+            if (!flvjs.isSupported()) {
+                alert('浏览器不支持flv.js');
+                return;
+            }
+
+            const videoElement = document.getElementById('videoPlayer');
+            
+            player = flvjs.createPlayer({
+                type: 'flv',
+                url: `/stream/play/${channel}`
+            }, {
+                enableWorker: false,
+                lazyLoad: false,
+                liveBufferLatencyChasing: true,
+                liveBufferLatencyMaxLatency: 0.5,
+                liveBufferLatencyMinRemain: 0.2
+            });
+
+            player.attachMediaElement(videoElement);
+            player.load();
+            player.play().catch(e => console.log('播放失败:', e));
+        }
+
+        window.onload = function() {
+            play();
+        };
+    </script>
+</body>
+</html>
