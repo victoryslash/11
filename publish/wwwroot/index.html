@@ -2,84 +2,112 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>海康流播放测试</title>
+    <title>海康监控 - 10画面</title>
     <style>
-        body { font-family: Arial; background: #1a1a1a; color: white; margin: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .channel { margin: 20px 0; background: #2d2d2d; padding: 15px; border-radius: 8px; }
-        video { width: 100%; max-height: 400px; background: #000; }
-        select { padding: 8px 12px; font-size: 16px; min-width: 150px; }
-        button { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        .status { margin-top: 10px; padding: 10px; border-radius: 4px; }
-        .status.ok { background: #28a745; }
-        .status.error { background: #dc3545; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #111; color: white; padding: 10px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 10px; background: #222; border-radius: 4px; }
+        .header h1 { font-size: 18px; color: #00d4ff; }
+        .status { font-size: 14px; color: #aaa; }
+        .status.ok { color: #2ecc71; }
+        .status.error { color: #e74c3c; }
+        .grid { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(2, 1fr); gap: 8px; height: calc(100vh - 80px); }
+        .video-cell { background: #000; border-radius: 4px; position: relative; overflow: hidden; border: 2px solid #333; }
+        .video-cell.active { border-color: #00d4ff; }
+        .video-cell.error { border-color: #e74c3c; }
+        .video-label { position: absolute; top: 5px; left: 5px; background: rgba(0,0,0,0.7); padding: 3px 8px; border-radius: 3px; font-size: 12px; z-index: 10; }
+        .video-status { position: absolute; bottom: 5px; left: 5px; font-size: 10px; color: #aaa; z-index: 10; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #666; font-size: 12px; }
+        .no-signal { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #e74c3c; font-size: 14px; text-align: center; }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        input { background: #333; color: white; border: none; padding: 5px 10px; border-radius: 3px; width: 180px; }
+        button { background: #00d4ff; color: #000; border: none; padding: 5px 15px; border-radius: 3px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #00b8e6; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>海康摄像头流播放测试</h1>
-        
-        <div>
-            <select id="channelSelect">
-                <option value="">加载中...</option>
-            </select>
-            <button onclick="play()">播放</button>
-            <button onclick="stop()">停止</button>
+    <div class="header">
+        <h1>📹 海康监控中心 (2x5)</h1>
+        <div class="controls">
+            <input type="text" id="apiUrl" value="http://localhost:5000" placeholder="后端地址">
+            <button onclick="refreshAll()">刷新全部</button>
         </div>
-
-        <div id="status" class="status">准备就绪</div>
-
-        <div class="channel">
-            <video id="videoPlayer" controls autoplay muted></video>
-        </div>
+        <div id="globalStatus" class="status">连接中...</div>
+    </div>
+    
+    <div class="grid" id="videoGrid">
+        <!-- 10个视频格子会通过JS生成 -->
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
     <script>
-        let player = null;
-        let reconnectTimer = null;
+        const players = {};
+        const channels = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-        function setStatus(msg, isError = false) {
-            const el = document.getElementById('status');
-            el.textContent = msg;
-            el.className = 'status ' + (isError ? 'error' : 'ok');
+        function getApiUrl() {
+            return document.getElementById('apiUrl').value.trim().replace(/\/$/, '');
         }
 
-        function stop() {
-            if (reconnectTimer) {
-                clearTimeout(reconnectTimer);
-                reconnectTimer = null;
-            }
-            if (player) {
-                player.destroy();
-                player = null;
-            }
-            setStatus('已停止');
+        function setGlobalStatus(text, isOk = true) {
+            const el = document.getElementById('globalStatus');
+            el.textContent = text;
+            el.className = 'status ' + (isOk ? 'ok' : 'error');
         }
 
-        function play() {
-            stop();
+        function setCellStatus(channel, status, isError = false) {
+            const cell = document.getElementById(`cell-${channel}`);
+            const statusEl = document.getElementById(`status-${channel}`);
+            if (cell) cell.className = 'video-cell ' + (isError ? 'error' : status === 'playing' ? 'active' : '');
+            if (statusEl) statusEl.textContent = status;
+        }
 
-            const channel = document.getElementById('channelSelect').value;
+        function createGrid() {
+            const grid = document.getElementById('videoGrid');
+            grid.innerHTML = '';
             
-            if (!channel) {
-                setStatus('请先选择有效通道', true);
-                return;
+            channels.forEach(channel => {
+                const cell = document.createElement('div');
+                cell.id = `cell-${channel}`;
+                cell.className = 'video-cell';
+                cell.innerHTML = `
+                    <div class="video-label">通道 ${channel}</div>
+                    <div class="video-status" id="status-${channel}">等待...</div>
+                    <div class="loading" id="loading-${channel}">等待连接</div>
+                    <video id="video-${channel}" muted playsinline></video>
+                `;
+                grid.appendChild(cell);
+            });
+        }
+
+        function stopChannel(channel) {
+            if (players[channel]) {
+                players[channel].destroy();
+                players[channel] = null;
             }
+        }
+
+        function playChannel(channel) {
+            stopChannel(channel);
             
+            const apiUrl = getApiUrl();
+            const video = document.getElementById(`video-${channel}`);
+            const loading = document.getElementById(`loading-${channel}`);
+            
+            setCellStatus(channel, '连接中...');
+            loading.style.display = 'block';
+
             if (!flvjs.isSupported()) {
-                setStatus('浏览器不支持flv.js', true);
+                setCellStatus(channel, '浏览器不支持', true);
+                loading.style.display = 'none';
                 return;
             }
 
-            const videoElement = document.getElementById('videoPlayer');
+            const streamUrl = `${apiUrl}/stream/play/${channel}`;
             
-            setStatus(`正在连接通道 ${channel}...`);
-
-            player = flvjs.createPlayer({
+            players[channel] = flvjs.createPlayer({
                 type: 'flv',
-                url: `/stream/play/${channel}`,
+                url: streamUrl,
                 hasAudio: false,
                 hasVideo: true,
                 isLive: true,
@@ -89,114 +117,72 @@
                 enableStashBuffer: true,
                 stashInitialSize: 128,
                 lazyLoad: false,
-                lazyLoadMaxDuration: 0,
-                lazyLoadRecoverDuration: 0,
                 deferLoadAfterSourceOpen: false,
                 autoCleanupSourceBuffer: true,
-                autoCleanupMaxBackwardDuration: 3,
-                autoCleanupMinBackwardDuration: 2,
-                fixAudioTimestampGap: true,
-                accurateSeek: false,
+                autoCleanupMaxBackwardDuration: 2,
+                autoCleanupMinBackwardDuration: 1,
                 liveBufferLatencyChasing: true,
-                liveBufferLatencyMaxLatency: 1.5,
-                liveBufferLatencyMinRemain: 0.5,
-                liveBufferCatchSpeed: 1.2
+                liveBufferLatencyMaxLatency: 1.0,
+                liveBufferLatencyMinRemain: 0.3
             });
 
-            player.on(flvjs.Events.ERROR, (errorType, errorDetail, errorInfo) => {
-                console.error('FLV错误:', errorType, errorDetail, errorInfo);
-                setStatus(`错误: ${errorDetail}`, true);
-                
-                if (errorType === flvjs.ErrorTypes.NETWORK_ERROR) {
-                    if (reconnectTimer) clearTimeout(reconnectTimer);
-                    reconnectTimer = setTimeout(() => {
-                        setStatus('正在重连...');
-                        play();
-                    }, 2000);
-                }
+            players[channel].on(flvjs.Events.ERROR, (errorType, errorDetail) => {
+                setCellStatus(channel, errorDetail, true);
             });
 
-            player.on(flvjs.Events.STATISTICS_INFO, (info) => {
-                if (info.speed > 0) {
-                    setStatus(`播放中 | 速度: ${Math.round(info.speed)} KB/s | 缓冲: ${Math.round(info.bufferLength * 1000)}ms`);
-                }
-            });
-
-            player.attachMediaElement(videoElement);
-            player.load();
+            players[channel].attachMediaElement(video);
+            players[channel].load();
             
-            player.play().then(() => {
-                setStatus('播放成功');
+            players[channel].play().then(() => {
+                setCellStatus(channel, '播放中');
+                loading.style.display = 'none';
             }).catch(e => {
-                console.log('播放失败:', e);
-                setStatus('自动播放被浏览器阻止，请点击播放按钮', true);
+                setCellStatus(channel, '等待关键帧');
             });
         }
 
-        async function loadChannels() {
+        async function checkStatus() {
             try {
-                const res = await fetch('/stream/status');
+                const apiUrl = getApiUrl();
+                const res = await fetch(`${apiUrl}/stream/status`);
                 const data = await res.json();
                 
-                console.log('状态:', data);
-                
-                const select = document.getElementById('channelSelect');
-                const currentValue = select.value;
-                select.innerHTML = '';
-                
-                let hasChannels = false;
-                
-                if (data.LoggedIn && data.Channels && data.Channels.length > 0) {
-                    const playable = data.Channels.filter((ch) => ch.PreviewSuccess);
+                if (data.LoggedIn) {
+                    const count = data.ActivePlayHandles ? data.ActivePlayHandles.length : 0;
+                    setGlobalStatus(`NVR已连接 | 在线通道: ${count}个`, true);
                     
-                    if (playable.length > 0) {
-                        playable.forEach((ch) => {
-                            const option = document.createElement('option');
-                            option.value = ch.Channel;
-                            const status = ch.HasBuffer ? `${Math.round(ch.BufferSize / 1024)} KB, ${ch.FrameCount}帧` : '等待数据...';
-                            option.textContent = `通道 ${ch.Channel} (${status})`;
-                            select.appendChild(option);
+                    // 只播放预览成功的通道
+                    if (data.Channels) {
+                        data.Channels.forEach(ch => {
+                            if (ch.PreviewSuccess) {
+                                if (!players[ch.Channel]) {
+                                    playChannel(ch.Channel);
+                                }
+                            } else {
+                                stopChannel(ch.Channel);
+                                setCellStatus(ch.Channel, '未预览', true);
+                                const loading = document.getElementById(`loading-${channel}`);
+                                if (loading) loading.textContent = '通道不可用';
+                            }
                         });
-                        
-                        if (currentValue) {
-                            select.value = currentValue;
-                        } else {
-                            select.selectedIndex = 0;
-                        }
-                        hasChannels = true;
                     }
-                } else if (!data.LoggedIn) {
-                    const option = document.createElement('option');
-                    option.value = '';
-                    option.textContent = 'NVR未登录，请检查配置';
-                    select.appendChild(option);
                 } else {
-                    const option = document.createElement('option');
-                    option.value = '';
-                    option.textContent = '暂无可用通道，请检查通道配置';
-                    select.appendChild(option);
+                    setGlobalStatus('NVR未登录', false);
                 }
-                
-                if (data.Error) {
-                    setStatus(`服务端错误: ${data.Error}`, true);
-                }
-                
-                return hasChannels;
             } catch (e) {
-                console.error('加载通道失败:', e);
-                return false;
+                setGlobalStatus('后端连接失败', false);
             }
         }
 
-        window.onload = async function() {
-            const hasChannels = await loadChannels();
-            setInterval(loadChannels, 5000);
-            
-            if (hasChannels) {
-                setTimeout(play, 500);
-            } else {
-                setStatus('暂无可用通道，请检查NVR连接配置', true);
-            }
+        function refreshAll() {
+            channels.forEach(ch => stopChannel(ch));
+            setTimeout(checkStatus, 500);
+        }
+
+        window.onload = function() {
+            createGrid();
+            checkStatus();
+            setInterval(checkStatus, 5000);
         };
     </script>
 </body>
