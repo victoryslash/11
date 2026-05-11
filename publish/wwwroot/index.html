@@ -19,35 +19,21 @@
         .video-status { position: absolute; bottom: 5px; left: 5px; font-size: 10px; color: #aaa; z-index: 10; }
         video { width: 100%; height: 100%; object-fit: contain; }
         .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #666; font-size: 12px; }
-        .no-signal { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #e74c3c; font-size: 14px; text-align: center; }
-        .controls { display: flex; gap: 10px; align-items: center; }
-        input { background: #333; color: white; border: none; padding: 5px 10px; border-radius: 3px; width: 180px; }
-        button { background: #00d4ff; color: #000; border: none; padding: 5px 15px; border-radius: 3px; cursor: pointer; font-weight: bold; }
-        button:hover { background: #00b8e6; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>📹 海康监控中心 (2x5)</h1>
-        <div class="controls">
-            <input type="text" id="apiUrl" value="http://localhost:5000" placeholder="后端地址">
-            <button onclick="refreshAll()">刷新全部</button>
-        </div>
         <div id="globalStatus" class="status">连接中...</div>
     </div>
     
     <div class="grid" id="videoGrid">
-        <!-- 10个视频格子会通过JS生成 -->
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
     <script>
         const players = {};
         const channels = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-        function getApiUrl() {
-            return document.getElementById('apiUrl').value.trim().replace(/\/$/, '');
-        }
 
         function setGlobalStatus(text, isOk = true) {
             const el = document.getElementById('globalStatus');
@@ -73,7 +59,7 @@
                 cell.innerHTML = `
                     <div class="video-label">通道 ${channel}</div>
                     <div class="video-status" id="status-${channel}">等待...</div>
-                    <div class="loading" id="loading-${channel}">等待连接</div>
+                    <div class="loading" id="loading-${channel}">连接中</div>
                     <video id="video-${channel}" muted playsinline></video>
                 `;
                 grid.appendChild(cell);
@@ -88,9 +74,8 @@
         }
 
         function playChannel(channel) {
-            stopChannel(channel);
+            if (players[channel]) return; // 已经在播放了
             
-            const apiUrl = getApiUrl();
             const video = document.getElementById(`video-${channel}`);
             const loading = document.getElementById(`loading-${channel}`);
             
@@ -103,27 +88,19 @@
                 return;
             }
 
-            const streamUrl = `${apiUrl}/stream/play/${channel}`;
-            
             players[channel] = flvjs.createPlayer({
                 type: 'flv',
-                url: streamUrl,
+                url: `/stream/play/${channel}`,
                 hasAudio: false,
                 hasVideo: true,
-                isLive: true,
-                cors: true
+                isLive: true
             }, {
                 enableWorker: true,
                 enableStashBuffer: true,
                 stashInitialSize: 128,
                 lazyLoad: false,
-                deferLoadAfterSourceOpen: false,
                 autoCleanupSourceBuffer: true,
-                autoCleanupMaxBackwardDuration: 2,
-                autoCleanupMinBackwardDuration: 1,
-                liveBufferLatencyChasing: true,
-                liveBufferLatencyMaxLatency: 1.0,
-                liveBufferLatencyMinRemain: 0.3
+                liveBufferLatencyChasing: true
             });
 
             players[channel].on(flvjs.Events.ERROR, (errorType, errorDetail) => {
@@ -143,29 +120,12 @@
 
         async function checkStatus() {
             try {
-                const apiUrl = getApiUrl();
-                const res = await fetch(`${apiUrl}/stream/status`);
+                const res = await fetch('/stream/status');
                 const data = await res.json();
                 
                 if (data.LoggedIn) {
                     const count = data.ActivePlayHandles ? data.ActivePlayHandles.length : 0;
                     setGlobalStatus(`NVR已连接 | 在线通道: ${count}个`, true);
-                    
-                    // 只播放预览成功的通道
-                    if (data.Channels) {
-                        data.Channels.forEach(ch => {
-                            if (ch.PreviewSuccess) {
-                                if (!players[ch.Channel]) {
-                                    playChannel(ch.Channel);
-                                }
-                            } else {
-                                stopChannel(ch.Channel);
-                                setCellStatus(ch.Channel, '未预览', true);
-                                const loading = document.getElementById(`loading-${channel}`);
-                                if (loading) loading.textContent = '通道不可用';
-                            }
-                        });
-                    }
                 } else {
                     setGlobalStatus('NVR未登录', false);
                 }
@@ -174,13 +134,14 @@
             }
         }
 
-        function refreshAll() {
-            channels.forEach(ch => stopChannel(ch));
-            setTimeout(checkStatus, 500);
-        }
-
         window.onload = function() {
             createGrid();
+            
+            // 页面一加载就播放所有通道
+            channels.forEach(channel => {
+                setTimeout(() => playChannel(channel), channel * 100); // 错开一点，避免同时请求冲垮
+            });
+            
             checkStatus();
             setInterval(checkStatus, 5000);
         };
